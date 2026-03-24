@@ -1,24 +1,26 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Awaitable, Callable, Union, cast
+import sys
+from typing import cast
 
-from typing_extensions import TypeAlias
+if sys.version_info >= (3, 10):
+    from typing import TypeGuard
+else:
+    from typing_extensions import TypeGuard
 
 from .sync import iscoroutinefunction
-
-Scope: TypeAlias = dict[str, Any]
-Receive: TypeAlias = Callable[[], Awaitable[Any]]
-Send: TypeAlias = Callable[[dict[str, Any]], Awaitable[None]]
-
-ASGISingleCallable: TypeAlias = Callable[[Scope, Receive, Send], Awaitable[Any]]
-ASGIDoubleCallableInstance: TypeAlias = Callable[[Receive, Send], Awaitable[Any]]
-ASGIDoubleCallable: TypeAlias = Callable[[Scope], ASGIDoubleCallableInstance]
-
-ASGIApplication: TypeAlias = Union[ASGISingleCallable, ASGIDoubleCallable, type]
+from .typing import (
+    ASGI2Application,
+    ASGI3Application,
+    ASGIApplication,
+    ASGIReceiveCallable,
+    ASGISendCallable,
+    Scope,
+)
 
 
-def is_double_callable(application: ASGIApplication) -> bool:
+def is_double_callable(application: object) -> TypeGuard[ASGI2Application]:
     """
     Tests to see if an application is a legacy-style (double-callable) application.
     """
@@ -40,24 +42,28 @@ def is_double_callable(application: ASGIApplication) -> bool:
     return not iscoroutinefunction(application)
 
 
-def double_to_single_callable(application: ASGIDoubleCallable) -> ASGISingleCallable:
+def double_to_single_callable(application: ASGI2Application) -> ASGI3Application:
     """
     Transforms a double-callable ASGI application into a single-callable one.
     """
 
-    async def new_application(scope: Scope, receive: Receive, send: Send) -> Any:
+    async def new_application(
+        scope: Scope,
+        receive: ASGIReceiveCallable,
+        send: ASGISendCallable,
+    ) -> None:
         instance = application(scope)
-        return await instance(receive, send)
+        await instance(receive, send)
 
     return new_application
 
 
-def guarantee_single_callable(application: ASGIApplication) -> ASGISingleCallable:
+def guarantee_single_callable(application: ASGIApplication) -> ASGI3Application:
     """
     Takes either a single- or double-callable application and always returns it
     in single-callable style. Use this to add backwards compatibility for ASGI
     2.0 applications to your server/test harness/etc.
     """
     if is_double_callable(application):
-        return double_to_single_callable(cast(ASGIDoubleCallable, application))
-    return cast(ASGISingleCallable, application)
+        return double_to_single_callable(application)
+    return cast(ASGI3Application, application)
